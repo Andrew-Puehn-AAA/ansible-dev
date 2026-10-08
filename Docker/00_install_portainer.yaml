@@ -4,7 +4,7 @@
   become: true
   vars:
     user_name: "{{ ansible_user | default('azureuser') }}"  # User added to the docker group
-    portainer_image: portainer/portainer-ce:2.45.2
+    portainer_image: portainer/portainer-ce:lts
 
   tasks:
     - name: Install prerequisite packages
