@@ -1,0 +1,86 @@
+# Deploy all compose files based on environment
+
+---
+- name: Deploy Stacks from External Compose Repo
+  hosts: azure_docker
+  become: true
+  vars:
+    # env_target comes from your Inventory
+    remote_base_path: "/opt/appdata"
+    appdata_uid: "1001"  # Must match the PUID/PGID your containers run as
+    appdata_gid: "1001"
+    temp_repo_path: "{{ playbook_dir }}/.temp_docker_repo"
+    docker_repo_url: "https://github.com/Andrew-Puehn-AAA/docker-dev.git"
+    # Unified regex to strip both '-compose' and the extensions (.yaml/.yml)
+    clean_regex: '-compose\.(yaml|yml)$|\.(yaml|yml)$'
+
+  tasks:
+    - name: "Local: Clone Docker Compose repo"
+      delegate_to: localhost
+      become: false
+      run_once: true
+      ansible.builtin.git:
+        repo: "{{ docker_repo_url }}"
+        dest: "{{ temp_repo_path }}"
+        version: main
+        force: true
+      vars:
+        ansible_remote_tmp: /tmp
+      environment:
+        HOME: /tmp
+
+    - name: "Local: Find all compose files"
+      delegate_to: localhost
+      become: false
+      ansible.builtin.find:
+        paths: "{{ temp_repo_path }}/{{ env_target }}"
+        patterns: "*.yaml,*.yml"
+      register: found_compose_files
+      vars:
+        ansible_remote_tmp: /tmp
+      environment:
+        HOME: /tmp
+
+    - name: "Ensure appdata base directory exists"
+      ansible.builtin.file:
+        path: "{{ remote_base_path }}"
+        state: directory
+        owner: "{{ appdata_uid }}"
+        group: "{{ appdata_gid }}"
+        mode: '0755'
+
+    - name: "Ensure directory exists for each service"
+      ansible.builtin.file:
+        path: "{{ service_dir }}"
+        state: directory
+        owner: "{{ appdata_uid }}"
+        group: "{{ appdata_gid }}"
+        mode: '0755'
+      loop: "{{ found_compose_files.files }}"
+      loop_control:
+        label: "{{ item.path | basename }}"
+      vars:
+        service_dir: "{{ remote_base_path }}/{{ item.path | basename | regex_replace(clean_regex, '') }}"
+
+    - name: "Sync compose files to host"
+      ansible.builtin.copy:
+        src: "{{ item.path }}"
+        dest: "{{ service_dir }}/docker-compose.yml"
+        owner: "{{ appdata_uid }}"
+        group: "{{ appdata_gid }}"
+        mode: '0644'
+      loop: "{{ found_compose_files.files }}"
+      loop_control:
+        label: "{{ item.path | basename }}"
+      vars:
+        service_dir: "{{ remote_base_path }}/{{ item.path | basename | regex_replace(clean_regex, '') }}"
+
+    - name: "Docker Compose Up"
+      community.docker.docker_compose_v2:
+        project_src: "{{ service_dir }}"
+        state: present
+      loop: "{{ found_compose_files.files }}"
+      loop_control:
+        label: "{{ item.path | basename }}"
+      vars:
+        service_dir: "{{ remote_base_path }}/{{ item.path | basename | regex_replace(clean_regex, '') }}"
