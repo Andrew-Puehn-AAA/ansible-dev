@@ -1,0 +1,45 @@
+---
+- name: Mount Azure Files share for Docker data
+  hosts: azure_docker
+  become: true
+  vars:
+    storage_account: "{{ docker_storage_username }}"  # Azure Files username is the storage account name
+    share_name: docker-data
+    mount_path: /mnt/docker-data
+    credentials_file: /etc/smbcredentials-dockermonitortestdata
+    mount_uid: 1001  # Must match the PUID/PGID your containers run as
+    mount_gid: 1001
+    # docker_storage_username and docker_storage_password come from the Semaphore docker-storage variable group
+
+  tasks:
+    - name: Install CIFS utilities
+      ansible.builtin.apt:
+        name: cifs-utils
+        state: present
+        update_cache: true
+        lock_timeout: 120
+
+    - name: Create mount directory
+      ansible.builtin.file:
+        path: "{{ mount_path }}"
+        state: directory
+        mode: '0755'
+
+    - name: Create SMB credentials file
+      ansible.builtin.copy:
+        dest: "{{ credentials_file }}"
+        content: |
+          username={{ docker_storage_username }}
+          password={{ docker_storage_password }}
+        owner: root
+        group: root
+        mode: '0600'
+      no_log: true
+
+    - name: Mount Azure Files share
+      ansible.posix.mount:
+        path: "{{ mount_path }}"
+        src: "//{{ storage_account }}.file.core.windows.net/{{ share_name }}"
+        fstype: cifs
+        opts: "credentials={{ credentials_file }},vers=3.0,serverino,nosharesock,actimeo=30,mfsymlinks,_netdev,nofail,uid={{ mount_uid }},gid={{ mount_gid }},file_mode=0664,dir_mode=0775"
+        state: mounted
