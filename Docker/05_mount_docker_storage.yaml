@@ -43,3 +43,23 @@
         fstype: cifs
         opts: "credentials={{ credentials_file }},vers=3.0,serverino,nosharesock,actimeo=30,mfsymlinks,_netdev,nofail,uid={{ mount_uid }},gid={{ mount_gid }},file_mode=0664,dir_mode=0775"
         state: mounted
+
+    - name: Create Docker service drop-in directory
+      ansible.builtin.file:
+        path: /etc/systemd/system/docker.service.d
+        state: directory
+        mode: '0755'
+
+    - name: Require the share to be mounted before Docker starts
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/docker.service.d/10-require-mount.conf
+        content: |
+          [Unit]
+          RequiresMountsFor={{ mount_path }}
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Reload systemd to apply the drop-in
+      ansible.builtin.systemd_service:
+        daemon_reload: true
